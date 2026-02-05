@@ -1,4 +1,4 @@
-"""Main CLI entry point for PDF Scan Organizer."""
+"""Main CLI entry point for Scanifest Destiny."""
 
 import argparse
 import logging
@@ -13,6 +13,8 @@ from .pdf_extractor import extract_text, get_pdf_info
 from .claude_namer import suggest_name, check_claude_available
 from .ledger import get_ledger
 from .learning import get_learning_system
+from .pdf_splitter import interactive_split, analyze_pdf_for_split
+from .metadata_extractor import extract_to_csv, load_template, create_template
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -61,6 +63,7 @@ def process_single_pdf(
     pdf_path: Path,
     dry_run: bool = False,
     force: bool = False,
+    no_patterns: bool = False,
 ) -> Optional[Path]:
     """
     Process a single PDF file: extract text, get name suggestion, rename.
@@ -99,8 +102,12 @@ def process_single_pdf(
     logger.info(f"      Pages: {extraction.pages_processed}/{extraction.total_pages}")
 
     # Step 2: Check learning system for known patterns/corrections
-    correction = learning.get_correction_suggestion(extraction.content_hash)
-    pattern_match = learning.find_matching_pattern(extraction.text, extraction.content_hash)
+    correction = None
+    pattern_match = None
+
+    if not no_patterns:
+        correction = learning.get_correction_suggestion(extraction.content_hash)
+        pattern_match = learning.find_matching_pattern(extraction.text, extraction.content_hash)
 
     new_name = None
     confidence = 0.0
@@ -214,27 +221,111 @@ def cmd_process(args: argparse.Namespace) -> int:
     logger.info(f"Found {len(pdfs)} PDF(s) to process")
     if args.dry_run:
         logger.info("[DRY RUN MODE - No files will be renamed]")
+    if args.no_patterns:
+        logger.info("[NO PATTERNS MODE - Always using Claude AI]")
+    if args.split:
+        logger.info("[SPLIT MODE - Will check for multi-document PDFs]")
 
     # Process each PDF
     processed = 0
     failed = 0
     skipped = 0
+    split_count = 0
 
     for pdf in pdfs:
-        result = process_single_pdf(pdf, dry_run=args.dry_run, force=args.force)
-        if result:
-            processed += 1
-        elif result is None:
-            # Check if it was skipped vs failed
-            skipped += 1
-        else:
-            failed += 1
+        files_to_process = [pdf]
+
+        # Check for multi-document PDFs if --split is enabled
+        if args.split:
+            pages, segments = analyze_pdf_for_split(pdf, args.model)
+            if segments and len(segments) > 1:
+                logger.info(f"\n[SPLIT] {pdf.name} contains {len(segments)} documents:")
+                for seg in segments:
+                    logger.info(f"         - {seg}")
+
+                if args.dry_run:
+                    logger.info("[DRY RUN] Would split into separate files")
+                else:
+                    # Interactive prompt with full options
+                    print(f"\nSplit '{pdf.name}' into {len(segments)} documents?")
+                    print("  [Y] Yes, split as shown")
+                    print("  [N] No, keep as single document")
+                    print("  [P] Split by individual pages")
+                    print("  [S] Skip this file")
+
+                    while True:
+                        choice = input("\nChoice [Y/N/P/S]: ").strip().upper()
+
+                        if choice in ('', 'Y'):
+                            from .pdf_splitter import split_pdf, DocumentSegment
+                            new_files = split_pdf(pdf, segments)
+                            split_count += len(new_files)
+                            files_to_process = new_files
+                            print(f"Delete original '{pdf.name}'? [y/N]: ", end="")
+                            if input().strip().lower() == 'y':
+                                pdf.unlink()
+                                logger.info(f"Deleted: {pdf.name}")
+                            break
+
+                        elif choice == 'N':
+                            logger.info("Keeping as single document.")
+                            break
+
+                        elif choice == 'P':
+                            from .pdf_splitter import split_pdf, DocumentSegment
+                            page_segments = [
+                                DocumentSegment(
+                                    start_page=i,
+                                    end_page=i,
+                                    doc_type="Page",
+                                    suggested_name=f"page_{i+1}",
+                                    confidence=1.0
+                                )
+                                for i in range(len(pages))
+                            ]
+                            new_files = split_pdf(pdf, page_segments)
+                            split_count += len(new_files)
+                            files_to_process = new_files
+                            print(f"Delete original '{pdf.name}'? [y/N]: ", end="")
+                            if input().strip().lower() == 'y':
+                                pdf.unlink()
+                                logger.info(f"Deleted: {pdf.name}")
+                            break
+
+                        elif choice == 'S':
+                            logger.info(f"Skipping: {pdf.name}")
+                            skipped += 1
+                            files_to_process = []
+                            break
+
+                        else:
+                            print("Invalid choice. Please enter Y, N, P, or S.")
+
+                    if not files_to_process:
+                        continue
+
+        # Process each file (original or split results)
+        for file_to_process in files_to_process:
+            result = process_single_pdf(
+                file_to_process,
+                dry_run=args.dry_run,
+                force=args.force,
+                no_patterns=args.no_patterns
+            )
+            if result:
+                processed += 1
+            elif result is None:
+                skipped += 1
+            else:
+                failed += 1
 
     # Summary
     logger.info(f"\n{'='*60}")
     logger.info("SUMMARY")
     logger.info(f"{'='*60}")
     logger.info(f"Total PDFs found: {len(pdfs)}")
+    if args.split and split_count > 0:
+        logger.info(f"Files created from splits: {split_count}")
     logger.info(f"Processed: {processed}")
     logger.info(f"Skipped: {skipped}")
     logger.info(f"Failed: {failed}")
@@ -323,6 +414,131 @@ def cmd_learn(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_split(args: argparse.Namespace) -> int:
+    """Handle the 'split' command - detect and split multi-document PDFs (no renaming)."""
+    logger = logging.getLogger(__name__)
+
+    # Apply settings
+    settings.model = args.model
+
+    # Check Claude availability
+    if not check_claude_available():
+        logger.error("Claude Code CLI is not available.")
+        return 1
+
+    # Find PDFs to analyze
+    pdfs = find_pdfs(args.path, args.recursive)
+
+    if not pdfs:
+        logger.warning(f"No PDF files found at: {args.path}")
+        return 0
+
+    logger.info(f"Found {len(pdfs)} PDF(s) to analyze for splitting")
+    if args.analyze_only:
+        logger.info("[ANALYZE ONLY - No files will be modified]")
+
+    all_new_files = []
+
+    for pdf in pdfs:
+        if args.analyze_only:
+            # Just show what would be split, don't actually split
+            pages, segments = analyze_pdf_for_split(pdf, args.model)
+            logger.info(f"\n{pdf.name}: {len(pages)} pages")
+            if segments and len(segments) > 1:
+                logger.info(f"  Would split into {len(segments)} documents:")
+                for seg in segments:
+                    logger.info(f"    - {seg}")
+            else:
+                logger.info("  Single document, no split needed")
+        else:
+            # Interactive split
+            new_files = interactive_split(pdf, args.model)
+            all_new_files.extend(new_files)
+
+    if not args.analyze_only and all_new_files:
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Split complete. {len(all_new_files)} file(s) created.")
+        logger.info(f"Run 'process' command to rename them.")
+
+    return 0
+
+
+def cmd_extract(args: argparse.Namespace) -> int:
+    """Handle the 'extract' command - extract metadata using CSV template."""
+    logger = logging.getLogger(__name__)
+
+    # Check Claude availability
+    if not check_claude_available():
+        logger.error("Claude Code CLI is not available.")
+        return 1
+
+    # Handle template creation
+    if args.create_template:
+        fields = [f.strip() for f in args.create_template.split(',')]
+        output = args.output or Path('template.csv')
+        create_template(output, fields)
+        logger.info(f"Template created: {output}")
+        logger.info(f"Fields: {', '.join(fields)}")
+        return 0
+
+    # Validate inputs
+    if not args.template:
+        logger.error("Template file required. Use --template or --create-template")
+        return 1
+
+    if not args.path:
+        logger.error("PDF path required.")
+        return 1
+
+    template_path = Path(args.template)
+    if not template_path.exists():
+        logger.error(f"Template not found: {template_path}")
+        return 1
+
+    # Find PDFs
+    pdfs = find_pdfs(args.path, args.recursive)
+    if not pdfs:
+        logger.warning(f"No PDF files found at: {args.path}")
+        return 0
+
+    logger.info(f"Found {len(pdfs)} PDF(s) to process")
+
+    # Load template to show fields
+    try:
+        fields = load_template(template_path)
+        logger.info(f"Extracting fields: {', '.join(fields)}")
+    except Exception as e:
+        logger.error(f"Failed to load template: {e}")
+        return 1
+
+    # Determine output path
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = Path(f"extracted_{timestamp}.csv")
+
+    # Extract metadata
+    logger.info(f"Extracting metadata using {args.model} model...")
+    try:
+        result_path = extract_to_csv(
+            pdfs,
+            template_path,
+            output_path,
+            model=args.model,
+            include_metadata_columns=not args.no_metadata,
+        )
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Extraction complete!")
+        logger.info(f"Output: {result_path}")
+        logger.info(f"PDFs processed: {len(pdfs)}")
+    except Exception as e:
+        logger.error(f"Extraction failed: {e}")
+        return 1
+
+    return 0
+
+
 def cmd_info(args: argparse.Namespace) -> int:
     """Handle the 'info' command - show PDF metadata without processing."""
     logger = logging.getLogger(__name__)
@@ -351,7 +567,7 @@ def cmd_info(args: argparse.Namespace) -> int:
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="PDF Scan Organizer - Intelligent PDF renaming tool",
+        description="Scanifest Destiny - Intelligent PDF renaming tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -392,6 +608,14 @@ def main() -> int:
         '-f', '--force', action='store_true',
         help='Re-process files even if already in ledger'
     )
+    process_parser.add_argument(
+        '--no-patterns', action='store_true',
+        help='Skip pattern matching, always use Claude AI'
+    )
+    process_parser.add_argument(
+        '--split', action='store_true',
+        help='Check for multi-document PDFs and offer to split before processing'
+    )
 
     # History command
     history_parser = subparsers.add_parser(
@@ -427,6 +651,61 @@ def main() -> int:
         'path', type=Path, help='PDF file to inspect'
     )
 
+    # Split command
+    split_parser = subparsers.add_parser(
+        'split', help='Detect and split multi-document PDFs (no renaming)'
+    )
+    split_parser.add_argument(
+        'path', type=Path, help='PDF file or directory to analyze'
+    )
+    split_parser.add_argument(
+        '-r', '--recursive', action='store_true',
+        help='Recursively process subdirectories'
+    )
+    split_parser.add_argument(
+        '-m', '--model', type=str, default='sonnet',
+        choices=['haiku', 'sonnet', 'opus'],
+        help='Claude model for boundary detection (default: sonnet)'
+    )
+    split_parser.add_argument(
+        '-a', '--analyze-only', action='store_true',
+        help='Only analyze and show splits, do not modify files'
+    )
+
+    # Extract command
+    extract_parser = subparsers.add_parser(
+        'extract', help='Extract metadata from PDFs using a CSV template'
+    )
+    extract_parser.add_argument(
+        'path', type=Path, nargs='?',
+        help='PDF file or directory to process'
+    )
+    extract_parser.add_argument(
+        '-t', '--template', type=Path,
+        help='CSV template file with column headers as fields to extract'
+    )
+    extract_parser.add_argument(
+        '-o', '--output', type=Path,
+        help='Output CSV file path (default: extracted_TIMESTAMP.csv)'
+    )
+    extract_parser.add_argument(
+        '-r', '--recursive', action='store_true',
+        help='Recursively process subdirectories'
+    )
+    extract_parser.add_argument(
+        '-m', '--model', type=str, default='sonnet',
+        choices=['haiku', 'sonnet', 'opus'],
+        help='Claude model to use (default: sonnet)'
+    )
+    extract_parser.add_argument(
+        '--create-template', type=str, metavar='FIELDS',
+        help='Create a blank template with comma-separated field names'
+    )
+    extract_parser.add_argument(
+        '--no-metadata', action='store_true',
+        help='Exclude _file_name, _confidence, etc. columns from output'
+    )
+
     args = parser.parse_args()
 
     # Setup logging
@@ -442,6 +721,8 @@ def main() -> int:
         'history': cmd_history,
         'learn': cmd_learn,
         'info': cmd_info,
+        'split': cmd_split,
+        'extract': cmd_extract,
     }
 
     handler = commands.get(args.command)

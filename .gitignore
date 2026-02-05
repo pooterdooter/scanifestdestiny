@@ -1,38 +1,147 @@
-# Virtual environment
+# ============================================
+# Scanifest Destiny - .gitignore
+# ============================================
+
+# --------------------------------------------
+# Python
+# --------------------------------------------
 venv/
 .venv/
-
-# Python
+env/
+ENV/
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+*.egg
 *.egg-info/
 dist/
 build/
+eggs/
+.eggs/
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
 
-# Data files (keep structure, ignore contents)
+# --------------------------------------------
+# Application Data (may contain private info)
+# --------------------------------------------
 data/*.json
 !data/.gitkeep
-
-# Logs
 logs/*.log
 !logs/.gitkeep
 
-# IDE
+# Extracted CSV outputs (may contain private info)
+extracted_*.csv
+*_extracted.csv
+output*.csv
+
+# --------------------------------------------
+# PDFs and Test Data (NEVER commit user documents)
+# --------------------------------------------
+# All PDFs - user documents may contain private info
+*.pdf
+
+# User scan directories
+_Scans*/
+Scans/
+scans/
+
+# Test and sample directories
+test_files/
+test_data/
+test_pdfs/
+samples/
+examples/
+input/
+output/
+
+# --------------------------------------------
+# IDE and Editors
+# --------------------------------------------
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-workspace
+*.sublime-project
 
-# OS
+# --------------------------------------------
+# Operating System
+# --------------------------------------------
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
 Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
 
-# Environment
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# --------------------------------------------
+# Environment and Secrets
+# --------------------------------------------
 .env
+.env.*
 *.env
+!.env.example
+.envrc
+secrets.json
+credentials.json
 
-# User scan directories (may contain private documents)
-_Scans_2025/
+# --------------------------------------------
+# Testing and Coverage
+# --------------------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# --------------------------------------------
+# Build and Distribution
+# --------------------------------------------
+*.manifest
+*.spec
+MANIFEST
+
+# --------------------------------------------
+# Jupyter Notebooks
+# --------------------------------------------
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
+
+# --------------------------------------------
+# Documentation (local only)
+# --------------------------------------------
+docs/GITHUB_SETUP.md
+
+# --------------------------------------------
+# Misc
+# --------------------------------------------
+*.bak
+*.tmp
+*.temp
+*.log
