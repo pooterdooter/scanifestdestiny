@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 echo ============================================
-echo   PDF Scan Organizer - Setup
+echo   Scanifest Destiny - Setup
 echo ============================================
 echo.
 

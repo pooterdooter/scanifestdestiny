@@ -1,4 +1,4 @@
-"""Configuration settings for PDF Scan Organizer."""
+"""Configuration settings for Scanifest Destiny."""
 
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -17,7 +17,7 @@ LOGS_DIR.mkdir(exist_ok=True)
 LEDGER_FILE = DATA_DIR / "ledger.json"
 PATTERNS_FILE = DATA_DIR / "patterns.json"
 CORRECTIONS_FILE = DATA_DIR / "corrections.json"
-LOG_FILE = LOGS_DIR / "scan-organizer.log"
+LOG_FILE = LOGS_DIR / "scanifestdestiny.log"
 
 # Type definitions
 ModelType = Literal["haiku", "sonnet", "opus"]

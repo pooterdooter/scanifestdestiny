@@ -5,12 +5,20 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from .config import settings, ModelType
 
 logger = logging.getLogger(__name__)
+
+# Context limits (conservative estimates in characters)
+# Claude models support ~200k tokens, but we use conservative limits
+MAX_CONTEXT_CHARS = {
+    "haiku": 50000,    # ~12k tokens, fast model
+    "sonnet": 100000,  # ~25k tokens, balanced
+    "opus": 150000,    # ~37k tokens, most capable
+}
 
 # Prompt template for naming suggestions
 NAMING_PROMPT = '''Analyze this document text and suggest a filename.
@@ -70,6 +78,42 @@ def _clean_filename(name: str) -> str:
     return name
 
 
+def _smart_truncate(text: str, max_chars: int) -> str:
+    """
+    Intelligently truncate text to fit within context limits.
+
+    Strategy:
+    - Keep first 60% (headers, document type, dates usually at top)
+    - Keep last 20% (signatures, totals, conclusions)
+    - Sample from middle 20% (supporting content)
+    """
+    if len(text) <= max_chars:
+        return text
+
+    # Calculate section sizes
+    first_size = int(max_chars * 0.60)
+    last_size = int(max_chars * 0.20)
+    middle_size = max_chars - first_size - last_size - 100  # 100 chars for markers
+
+    first_part = text[:first_size]
+    last_part = text[-last_size:]
+
+    # Get middle sample
+    middle_start = len(text) // 3
+    middle_part = text[middle_start:middle_start + middle_size]
+
+    truncated = (
+        f"{first_part}\n\n"
+        f"[... {len(text) - max_chars:,} characters truncated ...]\n\n"
+        f"{middle_part}\n\n"
+        f"[... continued ...]\n\n"
+        f"{last_part}"
+    )
+
+    logger.info(f"Text truncated: {len(text):,} -> {len(truncated):,} chars")
+    return truncated
+
+
 def _parse_claude_response(response: str) -> dict:
     """Parse JSON from Claude response, handling various formats."""
     response = response.strip()
@@ -122,11 +166,14 @@ def suggest_name(text: str, model: Optional[ModelType] = None) -> NamingResult:
     """
     model = model or settings.model
 
-    # Truncate text to avoid overwhelming the model (keep most relevant parts)
-    max_chars = 8000
-    if len(text) > max_chars:
-        # Keep beginning and some from middle
-        text = text[:max_chars - 500] + "\n\n[...truncated...]\n\n" + text[-500:]
+    # Get model-specific context limit
+    max_chars = MAX_CONTEXT_CHARS.get(model, 50000)
+
+    # Reserve space for prompt template (~500 chars)
+    max_text_chars = max_chars - 1000
+
+    # Smart truncate if needed
+    text = _smart_truncate(text, max_text_chars)
 
     prompt = NAMING_PROMPT.format(text=text)
 
