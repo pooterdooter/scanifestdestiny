@@ -181,9 +181,10 @@ def suggest_name(text: str, model: Optional[ModelType] = None) -> NamingResult:
     logger.debug(f"Prompt length: {len(prompt)} chars")
 
     try:
-        # Call Claude Code CLI
+        # Call Claude Code CLI (pass prompt via stdin to avoid CLI length limits)
         result = subprocess.run(
-            ["claude", "--print", "--model", _get_model_flag(model), prompt],
+            ["claude", "--print", "--model", _get_model_flag(model)],
+            input=prompt,
             capture_output=True,
             text=True,
             timeout=120,  # 2 minute timeout

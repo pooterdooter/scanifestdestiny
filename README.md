@@ -35,6 +35,8 @@ A local-first PDF analysis and intelligent renaming tool. Extracts text from PDF
 - [Usage Examples](#usage-examples)
 - [CSV Template Extraction](#csv-template-extraction)
 - [How Learning Works](#how-learning-works)
+- [Confidence Scoring](#confidence-scoring)
+- [Smart Text Handling](#smart-text-handling)
 - [Troubleshooting](#troubleshooting)
 - [Privacy & Security](#privacy--security)
 - [Contributing](#contributing)
@@ -333,7 +335,18 @@ Extract specific fields from PDFs using a CSV template.
 
 Extract specific fields from documents into a CSV file.
 
-### Create a Template
+### Pre-built Templates
+
+The `templates/` folder includes ready-to-use templates:
+
+```bash
+# Use the universal template (invoices, bills, medical, etc.)
+./run.sh extract "/path/to/pdfs" --template templates/extraction_template.csv -o results.csv
+```
+
+See `templates/README.md` for field descriptions and usage tips.
+
+### Create a Custom Template
 
 ```bash
 # Create a template with specific fields
@@ -390,6 +403,73 @@ If you manually rename a processed file:
 2. Confirm the corrections
 3. Future similar documents use your preferred names
 
+## Confidence Scoring
+
+The tool calculates confidence differently depending on the operation:
+
+### File Naming (process command)
+
+| Source | How Confidence is Calculated |
+|--------|------------------------------|
+| **Claude AI** | Self-reported by the AI based on document clarity, date certainty, and description accuracy (0-100%) |
+| **Pattern Match** | `keyword_overlap_score × pattern_average_confidence` |
+| **User Correction** | Always 100% (user-provided names are trusted) |
+
+### Metadata Extraction (extract command)
+
+```
+confidence = (fields_found / total_fields_requested) × 100%
+```
+
+For example, if you request 10 fields and the AI finds values for 7:
+- Confidence = 7/10 = **70%**
+
+### Document Splitting (split command)
+
+Claude AI reports confidence for each detected document boundary based on:
+- Clear visual/content separation between documents
+- Distinct document types identified
+- Page number continuity
+
+### Pattern Learning Threshold
+
+- **≥75% confidence**: Pattern is created and stored for future use
+- **<75% confidence**: Document is processed but no pattern is saved
+
+## Smart Text Handling
+
+### Context Window Management
+
+Large documents are automatically truncated to fit model context limits:
+
+| Model | Max Context | Use Case |
+|-------|-------------|----------|
+| Haiku | ~50,000 chars | Fast processing, simple documents |
+| Sonnet | ~100,000 chars | Balanced (default) |
+| Opus | ~150,000 chars | Complex documents, highest accuracy |
+
+### Smart Truncation Strategy
+
+When a document exceeds the context limit:
+
+```
+[First 60%] - Headers, document type, dates (most important info)
+[... truncated ...]
+[Middle 20%] - Sampled content for context
+[... continued ...]
+[Last 20%]  - Signatures, totals, conclusions
+```
+
+This preserves the most useful information for analysis while staying within limits.
+
+### Cross-Platform Compatibility
+
+Text is passed to Claude via stdin (not command-line arguments) to avoid platform-specific length limits:
+- Windows CMD: ~8,191 char limit (bypassed)
+- macOS/Linux: ~256KB-2MB limits (bypassed)
+
+This ensures reliable processing of large documents on all platforms.
+
 ## Troubleshooting
 
 ### "Tesseract not found"
@@ -430,11 +510,12 @@ sudo pacman -S tesseract
 
 ### Large PDFs / Context Overflow
 
-The tool automatically handles large documents by:
-- Keeping the first 60% of text (headers, key info)
-- Keeping the last 20% (conclusions, signatures)
-- Sampling from the middle
-- Using model-specific context limits
+The tool automatically handles large documents. See [Smart Text Handling](#smart-text-handling) for details.
+
+If you still encounter issues:
+- Use `--model opus` for larger context window (150k chars)
+- Ensure the PDF isn't corrupted
+- Check `logs/scanifestdestiny.log` for detailed error messages
 
 ### Pattern Matching Too Aggressive
 
