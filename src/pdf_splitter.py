@@ -118,8 +118,10 @@ def detect_boundaries_with_claude(
     logger.info(f"Analyzing {len(pages)} pages for document boundaries...")
 
     try:
+        # Pass prompt via stdin to avoid CLI length limits on Windows
         result = subprocess.run(
-            ["claude", "--print", "--model", model, prompt],
+            ["claude", "--print", "--model", model],
+            input=prompt,
             capture_output=True,
             text=True,
             timeout=120,

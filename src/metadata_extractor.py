@@ -117,8 +117,10 @@ def extract_metadata(
     logger.debug(f"Extraction prompt length: {len(prompt)} chars")
 
     try:
+        # Pass prompt via stdin to avoid CLI length limits on Windows
         result = subprocess.run(
-            ["claude", "--print", "--model", _get_model_flag(model), prompt],
+            ["claude", "--print", "--model", _get_model_flag(model)],
+            input=prompt,
             capture_output=True,
             text=True,
             timeout=180,  # 3 minute timeout for extraction
